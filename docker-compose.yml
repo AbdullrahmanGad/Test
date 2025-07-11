@@ -1,0 +1,156 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: eduverse-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-password}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-eduverse}
+    volumes:
+      - mongodb_data:/data/db
+      - ./Backend/data/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    ports:
+      - "27017:27017"
+    networks:
+      - eduverse-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Backend API
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: eduverse-backend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - SERVER_PORT=3000
+      - DB_CONNECTION=mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-password}@mongodb:27017/${MONGO_DATABASE:-eduverse}?authSource=admin
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key}
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+    ports:
+      - "3000:3000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - eduverse-network
+    volumes:
+      - ./Backend/uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api-docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Student Platform
+  student-platform:
+    build:
+      context: ./Frontend/Student-platform
+      dockerfile: Dockerfile
+    container_name: eduverse-student-platform
+    restart: unless-stopped
+    ports:
+      - "3001:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - eduverse-network
+    environment:
+      - REACT_APP_API_URL=http://localhost:3000/api
+
+  # Professor Dashboard
+  professor-dashboard:
+    build:
+      context: ./Frontend/Professor-Dashboard
+      dockerfile: Dockerfile
+    container_name: eduverse-professor-dashboard
+    restart: unless-stopped
+    ports:
+      - "3002:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - eduverse-network
+    environment:
+      - REACT_APP_API_URL=http://localhost:3000/api
+
+  # Admin Dashboard
+  admin-dashboard:
+    build:
+      context: ./Frontend/Admin_dashboard
+      dockerfile: Dockerfile
+    container_name: eduverse-admin-dashboard
+    restart: unless-stopped
+    ports:
+      - "3003:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - eduverse-network
+    environment:
+      - REACT_APP_API_URL=http://localhost:3000/api
+
+  # Login Page
+  login-page:
+    build:
+      context: ./Frontend/Login Page
+      dockerfile: Dockerfile
+    container_name: eduverse-login-page
+    restart: unless-stopped
+    ports:
+      - "3004:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - eduverse-network
+    environment:
+      - REACT_APP_API_URL=http://localhost:3000/api
+
+  # Nginx Reverse Proxy (Optional - for production)
+  nginx-proxy:
+    image: nginx:alpine
+    container_name: eduverse-nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - student-platform
+      - professor-dashboard
+      - admin-dashboard
+      - login-page
+      - backend
+    networks:
+      - eduverse-network
+    profiles:
+      - production
+
+volumes:
+  mongodb_data:
+    driver: local
+
+networks:
+  eduverse-network:
+    driver: bridge 
